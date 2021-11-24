@@ -14,15 +14,15 @@ AWS_REGION=""
 AWS_ACCESS_KEY_ID=""
 AWS_SECRET_ACCESS_KEY=""
 
-if [[ "$(grep '^[[]profile' <~/.aws/config | awk '{print $2}' | sed 's/]$//' | grep "${AWS_PROFILE}")" == "" ]]; then
+#if [[ "$(grep '^[[]profile' <~/.aws/config | awk '{print $2}' | sed 's/]$//' | grep "${AWS_PROFILE}")" == "" ]]; then
 # if [[ "$(aws configure list-profiles | grep "${AWS_PROFILE}")" == "" ]]; then
-    echo "ERROR ::: AWS profile ${AWS_PROFILE} does not exists. To Create AWS PROFILE, Run cli command - aws configure "
-	exit 1
-else   # AWS Profile nasuni available in local machine
+ #   echo "ERROR ::: AWS profile ${AWS_PROFILE} does not exists. To Create AWS PROFILE, Run cli command - aws configure "
+#	exit 1
+#else   # AWS Profile nasuni available in local machine
 	AWS_ACCESS_KEY_ID=$(aws configure get aws_access_key_id --profile ${AWS_PROFILE})
 	AWS_SECRET_ACCESS_KEY=$(aws configure get aws_secret_access_key --profile ${AWS_PROFILE})
 	AWS_REGION=$(aws configure get region --profile ${AWS_PROFILE})
-fi
+#fi
 
 echo "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID"
 echo "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY"
