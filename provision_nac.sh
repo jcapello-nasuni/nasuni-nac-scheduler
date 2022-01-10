@@ -87,6 +87,7 @@ if [ "$IS_ES" == "N" ]; then
     COMMAND="git clone -b main ${GIT_REPO}"
     $COMMAND
     RESULT=$?
+    echo $RESULT
     if [ $RESULT -eq 0 ]; then
         echo "INFO ::: GIT clone SUCCESS for repo ::: $GIT_REPO_NAME"
     else
