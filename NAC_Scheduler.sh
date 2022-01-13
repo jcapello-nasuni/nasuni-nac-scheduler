@@ -8,9 +8,59 @@
 DATE_WITH_TIME=`date "+%Y%m%d-%H%M%S"`	
 START=$(date +%s)
 
+#CTPROJECT-169
+NMC_ENDPOINT_ACCESSIBILITY() {
+	# NMC_ENDPOINT_ACCESSIBILITY $NAC_SCHEDULER_NAME $PUB_IP_ADDR_NAC_SCHEDULER #$PEM 
+	NAC_SCHEDULER_NAME="$1" 
+    PUB_IP_ADDR_NAC_SCHEDULER="$2" 
+    
+    # PEM="$3"
+
+    if [[ ${AWS_REGION} == "us-east-2" ]]; then
+		PEM="nac-manager.pem"
+	elif [[ "${AWS_REGION}" == "us-east-1" ]]; then
+		PEM="nac-manager-nv.pem"
+	fi
+	chmod 400 $PEM
+	# nac_scheduler_name = from FourthArgument of NAC_Scheduler.sh, user_sec.txt
+    parse_textfile_for_user_secret_keys_values user_sec.txt
+	# parse_textfile_for_nac_scheduler_name user_sec.txt
+    echo $NAC_SCHEDULER_NAME
+    echo $NMC_API_ENDPOINT
+    echo $NMC_API_USERNAME
+    echo $NMC_API_PASSWORD
+	echo "Inside NMC_ENDPOINT_ACCESSIBILITY"
+	echo "INFO ::: NAC_SCHEDULER_NAME ::: ${NAC_SCHEDULER_NAME}"
+	echo "INFO ::: PUB_IP_ADDR_NAC_SCHEDULER ::: ${PUB_IP_ADDR_NAC_SCHEDULER}"
+	echo "INFO ::: PEM ::: ${PEM}"
+
+    echo "PUB_IP_ADDR_NAC_SCHEDULER :"$PUB_IP_ADDR_NAC_SCHEDULER
+    py_file_name=`ls check_nmc_visiblity.py`
+    echo "Python File Name-"$py_file_name
+    cat $py_file_name | ssh -i "$PEM" ubuntu@$PUB_IP_ADDR_NAC_SCHEDULER -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null python3 - $NMC_API_USERNAME $NMC_API_PASSWORD $NMC_API_ENDPOINT
+	if [ $? -eq 0 ]; then
+    	echo "NAC Scheduler with IP : ${PUB_IP_ADDR_NAC_SCHEDULER}, have access to NMC API ${NMC_API_ENDPOINT} "
+	else
+    	echo "NAC Scheduler with IP : ${PUB_IP_ADDR_NAC_SCHEDULER}, Does NOT have access to NMC API ${NMC_API_ENDPOINT}. Please configure access to NMC "
+		exit 1
+	fi
+	echo "Completed NMC_ENDPOINT_ACCESSIBILITY Exitting"
+
+}
+parse_textfile_for_nac_scheduler_name() {
+  file="$1"
+  dos2unix $file
+  while IFS="=" read -r key value; do
+    case "$key" in
+      "nac_scheduler_name") NAC_SCHEDULER_NAME="$value" ;;
+    esac
+  done < "$file"
+}
+
 append_nac_keys_values_to_tfvars() {
   inputFile="$1"   ### Read InputFile
   outFile="$2"
+  dos2unix $inputFile
   echo "inputFile ::: $inputFile"
   echo "outFile ::: $outFile"
   # echo " " >> $outFile
@@ -118,6 +168,50 @@ do
 done < $file_name
 echo "}"
 }
+
+###########Adding Local IP to Security Group which is realted to NAC Public IP Address
+add_ip_to_sec_grp(){
+	NAC_SCHEDULER_IP_ADDR=$1 
+	echo "NAC_SCHEDULER_PUB_IP_ADDR add_ip_to_sec_grp ${NAC_SCHEDULER_IP_ADDR}"
+	echo `curl checkip.amazonaws.com` > test.txt
+
+	LOCAL_IP=`cat test.txt`
+
+	echo "Public IP of the local machine is ${LOCAL_IP}"
+	NEW_CIDR="${LOCAL_IP}"/32
+	echo "NEW_CIDR :- ${NEW_CIDR}"
+	#Get NAC Manager IP
+
+	# NAC_SCHEDULER_PUB_IP_ADDR=$(aws ec2 describe-instances --query "Reservations[].Instances[].{Name:Tags[?Key=='Name']|[0].Value,Status:State.Name,PublicIP:PublicIpAddress}" --filters "Name=tag:Name,Values='NACScheduler'" "Name=instance-state-name,Values=running" --region us-east-2 --profile nasuni | grep -e "PublicIP" |cut -d":" -f 2|tr -d '"'|tr -d ' ')
+	# echo "NAC_SCHEDULER_IP_ADDR ::: ${NAC_SCHEDULER_IP_ADDR}"
+	#SecGrp=$(aws ec2 describe-instances --query "Reservations[].Instances[].{Name:Tags[?Key=='Name']|[0].Value,Status:State.Name,PublicIP:PublicIpAddress,SecGrp:GroupId}" --filters "Name=tag:Name,Values='NACScheduler'" "Name=instance-state-name,Values=running" --region us-east-2 --profile nasuni | grep -e "SecGrp" |cut -d":" -f 2|tr -d '"'|tr -d ' ')
+	if [ "$NAC_SCHEDULER_NAME" != "" ]; then
+		#PUB_IP_ADDR_NAC_SCHEDULER=$(aws ec2 describe-instances --query "Reservations[*].Instances[*].{Name:Tags[?Key=='Name']|[0].Value,Status:State.Name,PublicIP:PublicIpAddress}" --filters "Name=tag:Name,Values='$NAC_SCHEDULER_NAME'" "Name=instance-state-name,Values=running" --region "${AWS_REGION}" | grep -e "PublicIP" |cut -d":" -f 2|tr -d '"'|tr -d ' ') 
+		SECURITY_GROUP_ID=`aws ec2 describe-instances --query "Reservations[].Instances[].{Name:Tags[?Key=='Name']|[0].Value,Status:State.Name,PublicIP:PublicIpAddress,SecurityGroups:SecurityGroups[*]}" --filters "Name=tag:Name,Values='$NAC_SCHEDULER_NAME'" "Name=instance-state-name,Values=running" --region us-east-2 --profile nasuni |grep -e "GroupId" |cut -d":" -f 2|tr -d '"'`
+		echo "Security group of $NAC_SCHEDULER_NAME is ${SECURITY_GROUP_ID}"
+	else 
+		echo "NAC_Schedluer is present .So fetch its sec group."
+		SECURITY_GROUP_ID=`aws ec2 describe-instances --query "Reservations[].Instances[].{Name:Tags[?Key=='Name']|[0].Value,Status:State.Name,PublicIP:PublicIpAddress,SecurityGroups:SecurityGroups[*]}" --filters "Name=tag:Name,Values='NACScheduler'" "Name=instance-state-name,Values=running" --region us-east-2 --profile nasuni |grep -e "GroupId" |cut -d":" -f 2|tr -d '"'`
+		echo "Security group of NACScheduler is ${SECURITY_GROUP_ID}"
+	fi
+	# SECURITY_GROUP_ID=`aws ec2 describe-instances --query "Reservations[].Instances[].{Name:Tags[?Key=='Name']|[0].Value,Status:State.Name,PublicIP:PublicIpAddress,SecurityGroups:SecurityGroups[*]}" --filters "Name=tag:Name,Values='NACScheduler'" "Name=instance-state-name,Values=running" --region us-east-2 --profile nasuni |grep -e "GroupId" |cut -d":" -f 2|tr -d '"'`
+	echo "Security group of NACScheduler is ${SECURITY_GROUP_ID}"
+
+
+	#If OS name is windows
+	#status= $(aws ec2 authorize-security-group-ingress --group-id ${SECURITY_GROUP_NAME} --protocol tcp --port 22 --cidr ${NEW_CIDR})
+	status=`aws ec2 authorize-security-group-ingress --group-id ${SECURITY_GROUP_ID} --protocol tcp --port 22 --cidr ${NEW_CIDR} 2>/dev/null`
+	# aws ec2 authorize-security-group-ingress --group-name sg-a3204ac8 --protocol tcp --port 22 --cidr 103.168.202.24/24
+	if [ $? -eq 0 ]; then
+		echo "${NEW_CIDR}  updateed to Security Group ${SECURITY_GROUP_ID}"
+	else
+		echo ${NEW_CIDR}  already available to Security Group ${SECURITY_GROUP_ID}
+		# echo "FAIL"
+	fi
+
+
+}
+
 AWS_PROFILE="nasuni"
 AWS_REGION=""
 AWS_ACCESS_KEY_ID=""
@@ -152,6 +246,8 @@ Schedule_CRON_JOB(){
 	elif [[ "${AWS_REGION}" == "us-east-1" ]]; then
 		PEM="nac-manager-nv.pem"
 	fi
+
+	chmod 400 $PEM
 
 	echo "INFO ::: Public IP Address:- $NAC_SCHEDULER_IP_ADDR"
 	echo "ssh -i "$PEM" ubuntu@$NAC_SCHEDULER_IP_ADDR -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null"
@@ -202,7 +298,7 @@ Schedule_CRON_JOB(){
 	fi
 
 }
-#######################################################################################
+##################################### START - SCRIPT Execution HERE ##################################################
 
 if [ $# -eq 0 ]; then
     echo "ERROR ::: No argument(s) supplied. This Script Takes 4 Mandatory Arguments 1) NMC Volume_Name, 2) Service, 3) Frequency and 4) User Secret(either Existing Secret Name Or Secret KVPs in a text file)"
@@ -236,6 +332,7 @@ else
 		echo "ERROR ::: the 3rd Argument is Not a number" >&2; exit 1
 	fi
 fi
+
 # echo "@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#"
 # exit 1 
 ### Validate aws_profile
@@ -258,7 +355,7 @@ if [[ -n "$FOURTH_ARG" ]]; then
 		validate_kvp nmc_api_endpoint "${NMC_API_ENDPOINT}"
 		validate_kvp web_access_appliance_address "${WEB_ACCESS_APPLIANCE_ADDRESS}"
 		validate_kvp destination_bucket "${DESTINATION_BUCKET}"
-		
+		# nac_scheduler_name   - Get the value -- If its not null / "" then NAC_SCHEDULER_NAME = ${nac_scheduler_name}
 		create_JSON_from_Input_user_KVPfile $FOURTH_ARG > user_creds_"${NMC_VOLUME_NAME}"_"${ANALYTICS_SERVICE}".json
 		#  echo "@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#@#"
 		# exit 1 
@@ -320,18 +417,43 @@ if [[ -n "$FOURTH_ARG" ]]; then
 			validate_secret_values "$USER_SECRET" volume_key "$AWS_REGION" "$AWS_PROFILE" 
 		fi
 	fi
+
 else 
 	echo "INFO ::: Fourth argument is NOT provided, So, It will consider prod/nac/admin as the default user secret."
 fi
+####   
+	
+	#NMC_ENDPOINT_ACCESSIBILITY  "$FOURTH_ARG"
+	
+####
 
 echo "INFO ::: Get IP Address of NAC Scheduler Instance"
 ######################  NAC Scheduler Instance is Available ##############################
-# PUB_IP_ADDR_NAC_SCHEDULER=$(aws ec2 describe-instances --query "Reservations[*].Instances[*].{Name:Tags[?Key=='Name']|[0].Value,Status:State.Name,PublicIP:PublicIpAddress}" --filters "Name=tag:Name,Values='NACScheduler-XXXXXXXXXXX'" "Name=instance-state-name,Values=running" --region "${AWS_REGION}" | grep -e "PublicIP" |cut -d":" -f 2|tr -d '"'|tr -d ' ') 
-PUB_IP_ADDR_NAC_SCHEDULER=$(aws ec2 describe-instances --query "Reservations[*].Instances[*].{Name:Tags[?Key=='Name']|[0].Value,Status:State.Name,PublicIP:PublicIpAddress}" --filters "Name=tag:Name,Values='NACScheduler'" "Name=instance-state-name,Values=running" --region "${AWS_REGION}" | grep -e "PublicIP" |cut -d":" -f 2|tr -d '"'|tr -d ' ') 
+
+NAC_SCHEDULER_NAME=""
+parse_textfile_for_nac_scheduler_name "$FOURTH_ARG"
+if [ "$NAC_SCHEDULER_NAME" != "" ]; then
+	### User has provided the NACScheduler Name as Key-Value from 4th Argument
+	PUB_IP_ADDR_NAC_SCHEDULER=$(aws ec2 describe-instances --query "Reservations[*].Instances[*].{Name:Tags[?Key=='Name']|[0].Value,Status:State.Name,PublicIP:PublicIpAddress}" --filters "Name=tag:Name,Values='$NAC_SCHEDULER_NAME'" "Name=instance-state-name,Values=running" --region "${AWS_REGION}" | grep -e "PublicIP" |cut -d":" -f 2|tr -d '"'|tr -d ' ') 
+else 
+	PUB_IP_ADDR_NAC_SCHEDULER=$(aws ec2 describe-instances --query "Reservations[*].Instances[*].{Name:Tags[?Key=='Name']|[0].Value,Status:State.Name,PublicIP:PublicIpAddress}" --filters "Name=tag:Name,Values='NACScheduler'" "Name=instance-state-name,Values=running" --region "${AWS_REGION}" | grep -e "PublicIP" |cut -d":" -f 2|tr -d '"'|tr -d ' ') 
+fi
+
+# PUB_IP_ADDR_NAC_SCHEDULER=3.144.254.220
 echo "INFO ::: PUB_IP_ADDR_NAC_SCHEDULER ::: ${PUB_IP_ADDR_NAC_SCHEDULER}"
+
+
 
 if [ "$PUB_IP_ADDR_NAC_SCHEDULER" != "" ];then 
 	echo "INFO ::: NAC Scheduler Instance is Available. IP Address: $PUB_IP_ADDR_NAC_SCHEDULER"
+	# Call this function to add Local public IP to Security group of NAC_SCHEDULER IP
+	add_ip_to_sec_grp $PUB_IP_ADDR_NAC_SCHEDULER $NAC_SCHEDULER_NAME
+	#CTPROJECT-169
+	
+	NMC_ENDPOINT_ACCESSIBILITY $NAC_SCHEDULER_NAME $PUB_IP_ADDR_NAC_SCHEDULER 
+
+	echo "exiting NMC_ENDPOINT_ACCESSIBILITY add_ip_to_sec_grp completed"
+	# exit 1
 	Schedule_CRON_JOB $PUB_IP_ADDR_NAC_SCHEDULER
 	
 ###################### NAC Scheduler EC2 Instance is NOT Available ##############################
@@ -372,7 +494,13 @@ else
 	rm -rf "$TFVARS_NAC_SCHEDULER"
 	echo "aws_profile="\"$AWS_PROFILE\" >> $TFVARS_NAC_SCHEDULER
 	echo "region="\"$AWS_REGION\" >> $TFVARS_NAC_SCHEDULER
-    COMMAND="terraform apply -var-file=$TFVARS_NAC_SCHEDULER -auto-approve"
+	if [[ "$NAC_SCHEDULER_NAME" != "" ]]; then
+		echo "nac_scheduler_name="\"$NAC_SCHEDULER_NAME\" >> $TFVARS_NAC_SCHEDULER
+    fi
+
+	# dos2unix $TFVARS_NAC_SCHEDULER
+	# exit 0
+	COMMAND="terraform apply -var-file=$TFVARS_NAC_SCHEDULER -auto-approve"
     $COMMAND
     if [ $? -eq 0 ]; then
         echo "INFO ::: NAC Scheduler EC2 PROVISIONING ::: Terraform apply ::: COMPLETED . . . . . . . . . . . . . . . . . . ."
@@ -387,7 +515,15 @@ else
 	pwd
 	cd ../
 	pwd
+	# Call this function to add Local public IP to Security group of NAC_SCHEDULER IP
+	add_ip_to_sec_grp ${NAC_SCHEDULER_IP_ADDR}
+	#CTPROJECT-169
+	#NMC_ENDPOINT_ACCESSIBILITY $NAC_SCHEDULER_NAME $PUB_IP_ADDR_NAC_SCHEDULER 
+	NMC_ENDPOINT_ACCESSIBILITY $NAC_SCHEDULER_NAME $NAC_SCHEDULER_IP_ADDR 
 	Schedule_CRON_JOB $NAC_SCHEDULER_IP_ADDR
+	# Setup_Search_Lambda
+	# Setup_Search_UI
+	
 fi
 
 END=$(date +%s)
@@ -395,6 +531,3 @@ secs=$((END - START))
 DIFF=$(printf '%02dh:%02dm:%02ds\n' $((secs/3600)) $((secs%3600/60)) $((secs%60)))
 echo "INFO ::: Total execution Time ::: $DIFF"
 #exit 0
-
-
-
