@@ -40,7 +40,99 @@ AWS_PROFILE=$(echo "$AWS_PROFILE" | tr -d '"')
 AWS_REGION=$(echo "$AWS_REGION" | tr -d '"')
 NMC_VOLUME_NAME=$(echo "$NMC_VOLUME_NAME" | tr -d '"')
 
+######################## Determine what service is employed ###############################################
+SERVICE = ${PWD##*_}
+
+######################## Check If Kendra Endpoint is Available ###############################################
+check_for_kendra(){
+KENDRA_INDEX_ID=$(aws secretsmanager get-secret-value --secret-id nac/kendra --region "${AWS_REGION}" | jq -r '.SecretString' | jq --arg VOL $NMC_VOLUME_NAME -r '.[$VOL]')
+echo "INFO ::: KENDRA_INDEX_ID : $KENDRA_INDEX_ID"
+# exit 1
+IS_KE="N"
+if [ "$KENDRA_INDEX_ID" == "" ] || [ "$KENDRA_INDEX_ID" == null ] || [ "$KENDRA_INDEX_ID" == false ]; then
+    echo "ERROR ::: A Kendra index does not exist for $NMC_VOLUME_NAME "
+    IS_KE="N"
+else
+    KE_INDEX_STATUS = $(aws kendra describe-index --id $KENDRA_ENDPOINT | jq -r '.Status')
+    if [ "$KE_INDEX_STATUS" == "ACTIVE" ]; then
+        echo "INFO ::: The Kendra index for $NMC_VOLUME_NAME is Active"
+        KE_EXPERIENCE_CREATING=$(aws kendra list-experiences --index-id $KENDRA_INDEX_ID | jq -r '.SummaryItems[]| select(.Status=="CREATING")')
+        KE_EXPERIENCE_CREATED=$(aws kendra list-experiences --index-id $KENDRA_INDEX_ID | jq -r '.SummaryItems[]| select(.Status=="ACTIVE").Endpoints[].Endpoint')
+        #If Experience is being created, notify user and then exit
+        if [ "$KE_EXPERIENCE_CREATING" == "" ] || [ "$KE_EXPERIENCE_CREATING" == null ] || [ "$KE_EXPERIENCE_CREATING" == false ]; then
+            echo "ERROR ::: A Kendra experience for $NMC_VOLUME_NAME is being created. Exiting now to allow that process to complete"            	
+            IS_KE="Y"
+            exit 0
+        fi
+        if [ "$KE_EXPERIENCE_CREATED" == "" ] || [ "$KE_EXPERIENCE_CREATED" == null ] || [ "$KE_EXPERIENCE_CREATED" == false ]; then
+            echo "INFO ::: No Kendra experience for $NMC_VOLUME_NAME has been created. Creating one now"   
+        else   
+            echo "INFO ::: A Kendra experience has already been created for $NMC_VOLUME_NAME. The endpoints are $KE_EXPERIENCE_CREATED"   	
+            IS_KE="Y"        
+        fi
+
+    else
+        KE_ERROR_MSG = $(aws kendra describe-index --id $KENDRA_ENDPOINT | jq -r '.ErrorMessage')
+        echo "INFO ::: The Kendra index for $NMC_VOLUME_NAME is not Active. The Error Message is $KE_ERROR_MSG"
+        exit 0
+fi
+if [ "$IS_KE" == "N" ]; then
+    echo "ERROR ::: A Kendra Index and/or Experience has not been Configured. Need to Provision ElasticSearch Domain Before, NAC Provisioning."
+    echo "INFO ::: Start Kendra Index and Experience Provisioning."
+    ########################### Git Clone  ###############################################################
+    echo "INFO ::: Start - Git Clone !!!"
+    ### Download Provisioning Code from GitHub
+    GIT_REPO="https://github.com/nasuni-community-tools/provision-kendra.git" 
+    GIT_REPO_NAME=$(echo ${GIT_REPO} | sed 's/.*\/\([^ ]*\/[^.]*\).*/\1/' | cut -d "/" -f 2)
+    echo "$GIT_REPO"
+    echo "INFO ::: GIT_REPO_NAME $GIT_REPO_NAME"
+    pwd
+    ls
+    echo "INFO ::: Removing ${GIT_REPO_NAME}"
+    rm -rf "${GIT_REPO_NAME}"
+    pwd
+    COMMAND="git clone -b main ${GIT_REPO}"
+    $COMMAND
+    RESULT=$?
+    echo $RESULT
+    if [ $RESULT -eq 0 ]; then
+        echo "INFO ::: GIT clone SUCCESS for repo ::: $GIT_REPO_NAME"
+    else
+        echo "INFO ::: GIT Clone  FAILED for repo ::: $GIT_REPO_NAME"
+        exit 1
+    fi
+    #### Copy tfvars file into repo
+    cp "${TFVARS_FILE}" "${GIT_REPO_NAME}"/kendra.tfvars
+    cd "${GIT_REPO_NAME}"
+    ##### RUN terraform init
+    echo "INFO ::: Kendra PROVISIONING ::: STARTED ::: Executing the Terraform scripts . . . . . . . . . . . ."
+    COMMAND="terraform init"
+    $COMMAND
+    chmod 755 $(pwd)/*
+    # exit 1
+    echo "INFO ::: Kendra PROVISIONING ::: Initialized Terraform Libraries/Dependencies"
+    ##### RUN terraform Apply
+    echo "INFO ::: Kendra PROVISIONING ::: STARTED ::: Terraform apply . . . . . . . . . . . . . . . . . . ."
+    COMMAND="terraform apply -auto-approve"
+    # COMMAND="terraform validate"
+    $COMMAND
+    if [ $? -eq 0 ]; then
+        echo "INFO ::: Kendra PROVISIONING ::: Terraform apply ::: COMPLETED . . . . . . . . . . . . . . . . . . ."
+    else
+        echo "ERROR ::: Kendra PROVISIONING ::: Terraform apply ::: FAILED."
+        exit 1
+    fi
+    cd ..
+else
+    echo "INFO ::: Kendra Enpoint is Active. The endpoints can be accessed at $KE_EXPERIENCE_CREATED"
+    echo "INFO ::: START ::: NAC Provisioning . . . . . . . . . . . ."
+fi
+
+}
+
 ######################## Check If ES Domain Available ###############################################
+check_for_es(){
+
 ES_DOMAIN_NAME=$(aws secretsmanager get-secret-value --secret-id nct/nce/os/admin --region "${AWS_REGION}" | jq -r '.SecretString' | jq -r '.es_domain_name')
 echo "INFO ::: ES_DOMAIN NAME : $ES_DOMAIN_NAME"
 # exit 1
@@ -120,7 +212,20 @@ else
 fi
 
 ##################################### END ES Domain ###################################################################
-# exit 0
+}
+
+if [ "$SERVICE" == "es" ]; then
+    check_for_es
+    GIT_REPO="https://github.com/psahuNasuni/nac-es.git"
+fi
+
+if [ "$SERVICE" == "kendra" ]; then
+    check_for_kendra
+    GIT_REPO="https://github.com/psahuNasuni/nac-kendra.git"
+fi
+
+
+
 
 NMC_VOLUME_NAME=$(echo "${TFVARS_FILE}" | rev | cut -d'/' -f 1 | rev |cut -d'.' -f 1)
 cd "$NMC_VOLUME_NAME"
@@ -129,7 +234,6 @@ echo "INFO ::: current user :-"`whoami`
 ########################### Git Clone : NAC Provisioning Repo ###############################################################
 echo "INFO ::: Start - Git Clone !!!"
 ### Download Provisioning Code from GitHub
-GIT_REPO="https://github.com/psahuNasuni/nac-es.git"
 GIT_REPO_NAME=$(echo ${GIT_REPO} | sed 's/.*\/\([^ ]*\/[^.]*\).*/\1/' | cut -d "/" -f 2)
 echo "INFO ::: GIT_REPO : $GIT_REPO"
 echo "INFO ::: GIT_REPO_NAME : $GIT_REPO_NAME"
