@@ -225,8 +225,6 @@ if [ "$SERVICE" == "kendra" ]; then
 fi
 
 
-
-
 NMC_VOLUME_NAME=$(echo "${TFVARS_FILE}" | rev | cut -d'/' -f 1 | rev |cut -d'.' -f 1)
 cd "$NMC_VOLUME_NAME"
 pwd
