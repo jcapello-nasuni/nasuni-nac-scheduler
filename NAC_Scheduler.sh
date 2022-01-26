@@ -35,7 +35,6 @@ NMC_ENDPOINT_ACCESSIBILITY() {
 	echo "INFO ::: NMC_API_ENDPOINT ::: ${NMC_API_ENDPOINT}"
 	echo "INFO ::: NMC_API_USERNAME ::: ${NMC_API_USERNAME}"
 	echo "INFO ::: NMC_API_PASSWORD ::: ${NMC_API_PASSWORD}" # 31-37
-
 	echo "PUB_IP_ADDR_NAC_SCHEDULER :"$PUB_IP_ADDR_NAC_SCHEDULER
 	py_file_name=$(ls check_nmc_visiblity.py)
 	echo "Python File Name-"$py_file_name
@@ -412,9 +411,10 @@ if [[ -n "$FOURTH_ARG" ]]; then
 	else ####  Fourth Argument is passed as User Secret Name
 		echo "INFO ::: Fourth Argument $FOURTH_ARG is passed as User Secret Name"
 		USER_SECRET="$FOURTH_ARG"
-
 		# Verify the Secret Exists
-		USER_SECRET_EXISTS=$(check_if_secret_exists $USER_SECRET ${AWS_PROFILE} ${AWS_REGION} | jq -r .Name)
+		USER_SECRET_RESPONSE=$(check_if_secret_exists $USER_SECRET ${AWS_PROFILE} ${AWS_REGION})
+		echo $USER_SECRET_RESPONSE
+		USER_SECRET_EXISTS = $({$USER_SECRET_RESPONSE} | jq -r .Name)
 		# echo "INFOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO $USER_SECRET_EXISTS"
 		if [ "${#USER_SECRET_EXISTS}" -gt 0 ]; then
 		# if [ "$USER_SECRET_EXISTS" == "Y" ]; then
