@@ -442,9 +442,9 @@ parse_4thArgument_for_nac_scheduler_name "$FOURTH_ARG"
 echo "nac_scheduler_name ========== $NAC_SCHEDULER_NAME "
 if [ "$NAC_SCHEDULER_NAME" != "" ]; then
 	### User has provided the NACScheduler Name as Key-Value from 4th Argument
-	PUB_IP_ADDR_NAC_SCHEDULER=$(aws ec2 describe-instances --query "Reservations[*].Instances[*].{Name:Tags[?Key=='Name']|[0].Value,Status:State.Name,PublicIP:PublicIpAddress}" --filters "Name=tag:Name,Values='$NAC_SCHEDULER_NAME'" "Name=instance-state-name,Values=running" --region "${AWS_REGION}" | grep -e "PublicIP" | cut -d":" -f 2 | tr -d '"' | tr -d ' ')
+	PUB_IP_ADDR_NAC_SCHEDULER=$(aws ec2 describe-instances --profile "${AWS_PROFILE}" --query "Reservations[*].Instances[*].{Name:Tags[?Key=='Name']|[0].Value,Status:State.Name,PublicIP:PublicIpAddress}" --filters "Name=tag:Name,Values='$NAC_SCHEDULER_NAME'" "Name=instance-state-name,Values=running" --region "${AWS_REGION}" | grep -e "PublicIP" | cut -d":" -f 2 | tr -d '"' | tr -d ' ')
 else
-	PUB_IP_ADDR_NAC_SCHEDULER=$(aws ec2 describe-instances --query "Reservations[*].Instances[*].{Name:Tags[?Key=='Name']|[0].Value,Status:State.Name,PublicIP:PublicIpAddress}" --filters "Name=tag:Name,Values='NACScheduler'" "Name=instance-state-name,Values=running" --region "${AWS_REGION}" | grep -e "PublicIP" | cut -d":" -f 2 | tr -d '"' | tr -d ' ')
+	PUB_IP_ADDR_NAC_SCHEDULER=$(aws ec2 describe-instances --profile "${AWS_PROFILE}" --query "Reservations[*].Instances[*].{Name:Tags[?Key=='Name']|[0].Value,Status:State.Name,PublicIP:PublicIpAddress}" --filters "Name=tag:Name,Values='NACScheduler'" "Name=instance-state-name,Values=running" --region "${AWS_REGION}" | grep -e "PublicIP" | cut -d":" -f 2 | tr -d '"' | tr -d ' ')
 fi
 
 # PUB_IP_ADDR_NAC_SCHEDULER=3.144.254.220
