@@ -198,7 +198,6 @@ if [ "$IS_ES" == "N" ]; then
     ########################### Git Clone  ###############################################################
     echo "INFO ::: BEGIN - Git Clone !!!"
     ### Download Provisioning Code from GitHub
-    ## GIT_REPO="https://github.com/psahuNasuni/provision-es.git"
     GIT_REPO_NAME=$(echo ${GIT_REPO} | sed 's/.*\/\([^ ]*\/[^.]*\).*/\1/' | cut -d "/" -f 2)
     echo "INFO ::: $GIT_REPO"
     echo "INFO ::: GIT_REPO_NAME $GIT_REPO_NAME"
@@ -247,13 +246,14 @@ fi
 
 if [ "$SERVICE" == "es" ]; then
     check_for_es
-    GIT_REPO="https://github.com/psahuNasuni/nac-es.git"
+    REPO_FOLDER = 'nasuni-analyticsconnector-opensearch'
 fi
 
 if [ "$SERVICE" == "kendra" ]; then
     check_for_kendra
-    GIT_REPO="https://github.com/psahuNasuni/nac-kendra.git"
+    REPO_FOLDER = 'nasuni-analyticsconnector-kendra'
 fi
+    GIT_REPO="https://github.com/$GITHUB_ORGANIZATION/$REPO_FOLDER.git"
 
 
 NMC_VOLUME_NAME=$(echo "${TFVARS_FILE}" | rev | cut -d'/' -f 1 | rev |cut -d'.' -f 1)
@@ -262,12 +262,10 @@ pwd
 echo "INFO ::: current user :-"`whoami`
 ########## Download NAC Provisioning Code from GitHub ##########
 ### GITHUB_ORGANIZATION defaults to NasuniLabs
-REPO_FOLDER="nac-es"
 validate_github $GITHUB_ORGANIZATION $REPO_FOLDER 
 ########################### Git Clone : NAC Provisioning Repo ###############################################################
 echo "INFO ::: BEGIN - Git Clone !!!"
 ### Download Provisioning Code from GitHub
-## GIT_REPO="https://github.com/psahuNasuni/nac-es.git"
 GIT_REPO_NAME=$(echo ${GIT_REPO} | sed 's/.*\/\([^ ]*\/[^.]*\).*/\1/' | cut -d "/" -f 2)
 echo "INFO ::: GIT_REPO : $GIT_REPO"
 echo "INFO ::: GIT_REPO_NAME : $GIT_REPO_NAME"
