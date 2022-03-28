@@ -167,7 +167,6 @@ check_for_kendra(){
 }
 
 
-
 ######################## Check If ES Domain Available ###############################################
 ES_DOMAIN_NAME=$(aws secretsmanager get-secret-value --secret-id nasuni-labs-os-admin --region "${AWS_REGION}" | jq -r '.SecretString' | jq -r '.es_domain_name')
 echo "INFO ::: ES_DOMAIN NAME : $ES_DOMAIN_NAME"
