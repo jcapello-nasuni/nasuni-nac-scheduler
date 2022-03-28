@@ -108,10 +108,11 @@ check_for_kendra(){
             KE_ERROR_MSG = $(aws kendra describe-index --id $KENDRA_ENDPOINT | jq -r '.ErrorMessage')
             echo "INFO ::: The Kendra index for $NMC_VOLUME_NAME is not Active. The Error Message is $KE_ERROR_MSG"
             exit 0
+        fi
     fi
     if [ "$IS_KE" == "N" ]; then
-        echo "ERROR ::: A Kendra Index and/or Experience has not been Configured. Need to Provision Kendra, before NAC Provisioning."
-        echo "INFO ::: Start Kendra Index and Experience Provisioning."
+        echo "ERROR ::: A Kendra Index has not been Configured. Need to Provision Kendra, before NAC Provisioning."
+        echo "INFO ::: Start Kendra Index Provisioning."
         REPO_FOLDER="nasuni-amazonkendra"
         validate_github $GITHUB_ORGANIZATION $REPO_FOLDER 
 
@@ -163,7 +164,6 @@ check_for_kendra(){
         echo "INFO ::: Kendra Enpoint is Active. The endpoints can be accessed at $KE_EXPERIENCE_CREATED"
         echo "INFO ::: START ::: NAC Provisioning . . . . . . . . . . . ."
     fi
-
 }
 
 
