@@ -75,6 +75,7 @@ When the script has completed, you will see a URL.
     |Key|Value (example)|Notes|
     |---|---------------|-----|
 <<<<<<< HEAD
+<<<<<<< HEAD
     |web_access_appliance_address|10.1.1.1|Should be publicly accessible and include shares for the volume being searched.|
     |destination_bucket|temporarybucket|See the fourth prerequisite described above.|
     |nmc_api_endpoint|10.1.1.2|Should be accessible to the resources created by this script.|
@@ -83,6 +84,11 @@ When the script has completed, you will see a URL.
     |destination_bucket|temporarybucket|See the fourth prerequisite described above.|
     |nmc_api_endpoint|https://10.1.1.2/api/v1.1|Should be accessible to the resources created by this script.|
 >>>>>>> 487ad4c (Update README.md)
+=======
+    |web_access_appliance_address|10.1.1.1|Should be publicly accessible and include shares for the volume being searched.|
+    |destination_bucket|temporarybucket|See the fourth prerequisite described above.|
+    |nmc_api_endpoint|10.1.1.2|Should be accessible to the resources created by this script.|
+>>>>>>> b6bbd2e (Update README.md)
     |nmc_api_username|apiuser|Make sure that this API user has the following Permissions: "Enable NMC API Access" and "Manage all aspects of Volumes". For details, see “Adding Permission Groups” on page 461 of the [Nasuni Management Console Guide](https://b.link/Nasuni_NMC_Guide).|
     |nmc_api_password|notarealpassword|Password for this user.|
     |nac_product_key|XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX|Your product key can be generated on the [Nasuni Cloud Services page] in your Nasuni dashboard.|
