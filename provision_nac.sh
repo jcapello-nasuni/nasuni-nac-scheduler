@@ -33,6 +33,7 @@ read_TFVARS() {
       "aws_profile") AWS_PROFILE="$value" ;;
       "region") AWS_REGION="$value" ;;
       "volume_name") NMC_VOLUME_NAME="$value" ;;
+      "user_secret") USER_SECRET="$value" ;;
       "github_organization") GITHUB_ORGANIZATION="$value" ;;
     esac
   done < "$file"
@@ -65,10 +66,109 @@ read_TFVARS "$TFVARS_FILE"
 AWS_PROFILE=$(echo "$AWS_PROFILE" | tr -d '"')
 AWS_REGION=$(echo "$AWS_REGION" | tr -d '"')
 NMC_VOLUME_NAME=$(echo "$NMC_VOLUME_NAME" | tr -d '"')
+USER_SECRET=$(echo "$USER_SECRET" | tr -d '"')
 GITHUB_ORGANIZATION=$(echo "$GITHUB_ORGANIZATION" | tr -d '"')
 
+######################## Determine what service is employed ###############################################
+SERVICE = ${PWD##*_}
+
+######################## Check If Kendra Endpoint is Available ###############################################
+check_for_kendra(){
+    REPO_FOLDER=$1
+    NAC_SCHEDULER_NAME=$(aws secretsmanager get-secret-value --secret-id ${USER_SECRET} --region "${AWS_REGION}" --profile "${AWS_PROFILE}" | jq -r '.SecretString' | jq --arg NACNAME nac_scheduler_name -r '.[$NACNAME]' | tr '[:upper:]' '[:lower:]')
+    SCHEDULER_SECRET_NAME="prod/nac/${NAC_SCHEDULER_NAME}"
+    INTEGRATION_ID="${NMC_VOLUME_NAME}_kendra"
+    KENDRA_INDEX_ID=$(aws secretsmanager get-secret-value --secret-id "${SCHEDULER_SECRET_NAME}" --region "${AWS_REGION}" --profile "${AWS_PROFILE}" | jq -r '.SecretString' | jq --arg intid "$INTEGRATION_ID" '..|.[$intid]?')
+    echo "INFO ::: KENDRA_INDEX_ID : $KENDRA_INDEX_ID"
+    # exit 1
+    IS_KE="N"
+    if [ "$KENDRA_INDEX_ID" == "" ] || [ "$KENDRA_INDEX_ID" == null ] || [ "$KENDRA_INDEX_ID" == false ]; then
+        echo "ERROR ::: A Kendra index does not exist for $NMC_VOLUME_NAME "
+        IS_KE="N"
+    else
+        KE_INDEX_STATUS = $(aws kendra describe-index --id $KENDRA_INDEX_ID | jq -r '.Status')
+        if [ "$KE_INDEX_STATUS" == "ACTIVE" ]; then
+            echo "INFO ::: The Kendra index for $NMC_VOLUME_NAME is Active"
+            KE_EXPERIENCE_CREATING=$(aws kendra list-experiences --index-id $KENDRA_INDEX_ID | jq -r '.SummaryItems[]| select(.Status=="CREATING")')
+            KE_EXPERIENCE_CREATED=$(aws kendra list-experiences --index-id $KENDRA_INDEX_ID | jq -r '.SummaryItems[]| select(.Status=="ACTIVE").Endpoints[].Endpoint')
+            #If Experience is being created, notify user and then exit
+            if [ "$KE_EXPERIENCE_CREATING" == "" ] || [ "$KE_EXPERIENCE_CREATING" == null ] || [ "$KE_EXPERIENCE_CREATING" == false ]; then
+                echo "ERROR ::: A Kendra experience for $NMC_VOLUME_NAME is being created. Exiting now to allow that process to complete"            	
+                IS_KE="Y"
+                exit 0
+            fi
+            if [ "$KE_EXPERIENCE_CREATED" == "" ] || [ "$KE_EXPERIENCE_CREATED" == null ] || [ "$KE_EXPERIENCE_CREATED" == false ]; then
+                echo "INFO ::: No Kendra experience for $NMC_VOLUME_NAME has been created. Creating one now"   
+            else   
+                echo "INFO ::: A Kendra experience has already been created for $NMC_VOLUME_NAME. The endpoints are $KE_EXPERIENCE_CREATED"   	
+                IS_KE="Y"        
+            fi
+
+        else
+            KE_ERROR_MSG = $(aws kendra describe-index --id $KENDRA_ENDPOINT | jq -r '.ErrorMessage')
+            echo "INFO ::: The Kendra index for $NMC_VOLUME_NAME is not Active. The Error Message is $KE_ERROR_MSG"
+            exit 0
+        fi
+    fi
+    if [ "$IS_KE" == "N" ]; then
+        echo "ERROR ::: A Kendra Index has not been Configured. Need to Provision Kendra, before NAC Provisioning."
+        echo "INFO ::: Start Kendra Index Provisioning."
+        REPO_FOLDER="nasuni-amazonkendra"
+        validate_github $GITHUB_ORGANIZATION $REPO_FOLDER 
+
+        ########################### Git Clone  ###############################################################
+        echo "INFO ::: Start - Git Clone !!!"
+        ### Download Provisioning Code from GitHub
+        GIT_REPO="https://github.com/$GITHUB_ORGANIZATION/$REPO_FOLDER.git"
+        GIT_REPO_NAME=$(echo ${GIT_REPO} | sed 's/.*\/\([^ ]*\/[^.]*\).*/\1/' | cut -d "/" -f 2)
+        echo "$GIT_REPO"
+        echo "INFO ::: GIT_REPO_NAME $GIT_REPO_NAME"
+        pwd
+        ls
+        echo "INFO ::: Removing ${GIT_REPO_NAME}"
+        rm -rf "${GIT_REPO_NAME}"
+        pwd
+        COMMAND="git clone -b main ${GIT_REPO}"
+        $COMMAND
+        RESULT=$?
+        echo $RESULT
+        if [ $RESULT -eq 0 ]; then
+            echo "INFO ::: GIT clone SUCCESS for repo ::: $GIT_REPO_NAME"
+        else
+            echo "INFO ::: GIT Clone  FAILED for repo ::: $GIT_REPO_NAME"
+            exit 1
+        fi
+        #### Copy tfvars file into repo
+        cp "${TFVARS_FILE}" "${GIT_REPO_NAME}"/
+        cd "${GIT_REPO_NAME}"
+        ##### RUN terraform init
+        echo "INFO ::: Kendra PROVISIONING ::: STARTED ::: Executing the Terraform scripts . . . . . . . . . . . ."
+        COMMAND="terraform init"
+        $COMMAND
+        chmod 755 $(pwd)/*
+        # exit 1
+        echo "INFO ::: Kendra PROVISIONING ::: Initialized Terraform Libraries/Dependencies"
+        ##### RUN terraform Apply
+        echo "INFO ::: Kendra PROVISIONING ::: STARTED ::: Terraform apply . . . . . . . . . . . . . . . . . . ."
+        COMMAND="terraform apply -var-file=${TFVARS_FILE} -auto-approve"
+        # COMMAND="terraform validate"
+        $COMMAND
+        if [ $? -eq 0 ]; then
+            echo "INFO ::: Kendra PROVISIONING ::: Terraform apply ::: COMPLETED . . . . . . . . . . . . . . . . . . ."
+        else
+            echo "ERROR ::: Kendra PROVISIONING ::: Terraform apply ::: FAILED."
+            exit 1
+        fi
+        cd ..
+    else
+        echo "INFO ::: Kendra Enpoint is Active. The endpoints can be accessed at $KE_EXPERIENCE_CREATED"
+        echo "INFO ::: START ::: NAC Provisioning . . . . . . . . . . . ."
+    fi
+}
+
+
 ######################## Check If ES Domain Available ###############################################
-ES_DOMAIN_NAME=$(aws secretsmanager get-secret-value --secret-id nasuni-labs-os-admin --region "${AWS_REGION}" --profile "${AWS_PROFILE}" | jq -r '.SecretString' | jq -r '.es_domain_name')
+ES_DOMAIN_NAME=$(aws secretsmanager get-secret-value --secret-id nasuni-labs-os-admin --region "${AWS_REGION}" | jq -r '.SecretString' | jq -r '.es_domain_name')
 echo "INFO ::: ES_DOMAIN NAME : $ES_DOMAIN_NAME"
 # exit 1
 IS_ES="N"
@@ -76,80 +176,188 @@ if [ "$ES_DOMAIN_NAME" == "" ] || [ "$ES_DOMAIN_NAME" == null ]; then
     echo "ERROR ::: ElasticSearch Domain is Not provided in admin secret"
     IS_ES="N"
 else
-    ES_CREATED=$(aws es describe-elasticsearch-domain --domain-name "${ES_DOMAIN_NAME}" --region "${AWS_REGION}"  --profile "${AWS_PROFILE}" | jq -r '.DomainStatus.Created')
+    ES_CREATED=$(aws es describe-elasticsearch-domain --domain-name "${ES_DOMAIN_NAME}" --region "${AWS_REGION}" | jq -r '.DomainStatus.Created')
     if [ $? -eq 0 ]; then
         echo "INFO ::: ES_CREATED : $ES_CREATED"
-        ES_PROCESSING=$(aws es describe-elasticsearch-domain --domain-name "${ES_DOMAIN_NAME}" --region "${AWS_REGION}"  --profile "${AWS_PROFILE}" | jq -r '.DomainStatus.Processing')
+        ES_PROCESSING=$(aws es describe-elasticsearch-domain --domain-name "${ES_DOMAIN_NAME}" --region "${AWS_REGION}" | jq -r '.DomainStatus.Processing')
         echo "INFO ::: ES_PROCESSING : $ES_PROCESSING"
-        ES_UPGRADE_PROCESSING=$(aws es describe-elasticsearch-domain --domain-name "${ES_DOMAIN_NAME}" --region "${AWS_REGION}"  --profile "${AWS_PROFILE}" | jq -r '.DomainStatus.UpgradeProcessing')
+        ES_UPGRADE_PROCESSING=$(aws es describe-elasticsearch-domain --domain-name "${ES_DOMAIN_NAME}" --region "${AWS_REGION}" | jq -r '.DomainStatus.UpgradeProcessing')
         echo "INFO ::: ES_UPGRADE_PROCESSING : $ES_UPGRADE_PROCESSING"
     
         if [ "$ES_PROCESSING" == "false" ] &&  [ "$ES_UPGRADE_PROCESSING" == "false" ]; then
             echo "INFO ::: ElasticSearch Domain ::: $ES_DOMAIN_NAME is Active"
             IS_ES="Y"
         else
-            echo "ERROR ::: ElasticSearch Domain ::: $ES_DOMAIN_NAME is either unavailable Or Not Active"
+            KE_ERROR_MSG = $(aws kendra describe-index --id $KENDRA_ENDPOINT | jq -r '.ErrorMessage')
+            echo "INFO ::: The Kendra index for $NMC_VOLUME_NAME is not Active. The Error Message is $KE_ERROR_MSG"
+            exit 0
+    fi
+    if [ "$IS_KE" == "N" ]; then
+        echo "ERROR ::: A Kendra Index and/or Experience has not been Configured. Need to Provision ElasticSearch Domain Before, NAC Provisioning."
+        echo "INFO ::: Start Kendra Index and Experience Provisioning."
+        ########################### Git Clone  ###############################################################
+        echo "INFO ::: Start - Git Clone !!!"
+        ### Download Provisioning Code from GitHub
+        GIT_REPO="https://github.com/$GITHUB_ORGANIZATION/$REPO_FOLDER.git"
+        GIT_REPO_NAME=$(echo ${GIT_REPO} | sed 's/.*\/\([^ ]*\/[^.]*\).*/\1/' | cut -d "/" -f 2)
+        echo "$GIT_REPO"
+        echo "INFO ::: GIT_REPO_NAME $GIT_REPO_NAME"
+        pwd
+        ls
+        echo "INFO ::: Removing ${GIT_REPO_NAME}"
+        rm -rf "${GIT_REPO_NAME}"
+        pwd
+        COMMAND="git clone -b main ${GIT_REPO}"
+        $COMMAND
+        RESULT=$?
+        echo $RESULT
+        if [ $RESULT -eq 0 ]; then
+            echo "INFO ::: GIT clone SUCCESS for repo ::: $GIT_REPO_NAME"
+        else
+            echo "INFO ::: GIT Clone  FAILED for repo ::: $GIT_REPO_NAME"
+            exit 1
+        fi
+        #### Copy tfvars file into repo
+        cp "${TFVARS_FILE}" "${GIT_REPO_NAME}"/kendra.tfvars
+        cd "${GIT_REPO_NAME}"
+        ##### RUN terraform init
+        echo "INFO ::: Kendra PROVISIONING ::: STARTED ::: Executing the Terraform scripts . . . . . . . . . . . ."
+        COMMAND="terraform init"
+        $COMMAND
+        chmod 755 $(pwd)/*
+        # exit 1
+        echo "INFO ::: Kendra PROVISIONING ::: Initialized Terraform Libraries/Dependencies"
+        ##### RUN terraform Apply
+        echo "INFO ::: Kendra PROVISIONING ::: STARTED ::: Terraform apply . . . . . . . . . . . . . . . . . . ."
+        COMMAND="terraform apply -auto-approve"
+        # COMMAND="terraform validate"
+        $COMMAND
+        if [ $? -eq 0 ]; then
+            echo "INFO ::: Kendra PROVISIONING ::: Terraform apply ::: COMPLETED . . . . . . . . . . . . . . . . . . ."
+        else
+            echo "ERROR ::: Kendra PROVISIONING ::: Terraform apply ::: FAILED."
+            exit 1
+        fi
+        cd ..
+    else
+        echo "INFO ::: Kendra Enpoint is Active. The endpoints can be accessed at $KE_EXPERIENCE_CREATED"
+        echo "INFO ::: START ::: NAC Provisioning . . . . . . . . . . . ."
+    fi
+
+}
+
+######################## Check If ES Domain Available ###############################################
+check_for_es(){
+    REPO_FOLDER=$1
+    ES_DOMAIN_NAME=$(aws secretsmanager get-secret-value --secret-id nct/nce/os/admin --region "${AWS_REGION}" | jq -r '.SecretString' | jq -r '.es_domain_name')
+    echo "INFO ::: ES_DOMAIN NAME : $ES_DOMAIN_NAME"
+    # exit 1
+    IS_ES="N"
+    if [ "$ES_DOMAIN_NAME" == "" ] || [ "$ES_DOMAIN_NAME" == null ]; then
+        echo "ERROR ::: ElasticSearch Domain is Not provided in admin secret"
+        IS_ES="N"
+    else
+        ES_CREATED=$(aws es describe-elasticsearch-domain --domain-name "${ES_DOMAIN_NAME}" --region "${AWS_REGION}" | jq -r '.DomainStatus.Created')
+        if [ $? -eq 0 ]; then
+            echo "INFO ::: ES_CREATED : $ES_CREATED"
+            ES_PROCESSING=$(aws es describe-elasticsearch-domain --domain-name "${ES_DOMAIN_NAME}" --region "${AWS_REGION}" | jq -r '.DomainStatus.Processing')
+            echo "INFO ::: ES_PROCESSING : $ES_PROCESSING"
+            ES_UPGRADE_PROCESSING=$(aws es describe-elasticsearch-domain --domain-name "${ES_DOMAIN_NAME}" --region "${AWS_REGION}" | jq -r '.DomainStatus.UpgradeProcessing')
+            echo "INFO ::: ES_UPGRADE_PROCESSING : $ES_UPGRADE_PROCESSING"
+        
+            if [ "$ES_PROCESSING" == "false" ] &&  [ "$ES_UPGRADE_PROCESSING" == "false" ]; then
+                echo "INFO ::: ElasticSearch Domain ::: $ES_DOMAIN_NAME is Active"
+                IS_ES="Y"
+            else
+                echo "ERROR ::: ElasticSearch Domain ::: $ES_DOMAIN_NAME is either unavailable Or Not Active"
+                IS_ES="N"
+            fi
+        else
+            echo "ERROR ::: ElasticSearch Domain ::: $ES_DOMAIN_NAME not found"
             IS_ES="N"
         fi
-    else
-        echo "ERROR ::: ElasticSearch Domain ::: $ES_DOMAIN_NAME not found"
-        IS_ES="N"
     fi
-fi
-if [ "$IS_ES" == "N" ]; then
-    echo "ERROR ::: ElasticSearch Domain is Not Configured. Need to Provision ElasticSearch Domain Before, NAC Provisioning."
-    echo "INFO ::: Begin ElasticSearch Domain Provisioning."
-   ########## Download ElasticSearch Provisioning Code from GitHub ##########
-	### GITHUB_ORGANIZATION defaults to nasuni-labs
-	REPO_FOLDER="nasuni-awsopensearch"
-	validate_github $GITHUB_ORGANIZATION $REPO_FOLDER 
-    ########################### Git Clone  ###############################################################
-    echo "INFO ::: BEGIN - Git Clone !!!"
-    ### Download Provisioning Code from GitHub
-    GIT_REPO_NAME=$(echo ${GIT_REPO} | sed 's/.*\/\([^ ]*\/[^.]*\).*/nasuni-\1/' | cut -d "/" -f 2)
-    echo "INFO ::: $GIT_REPO"
-    echo "INFO ::: GIT_REPO_NAME $GIT_REPO_NAME"
-    pwd
-    ls
-    echo "INFO ::: Removing ${GIT_REPO_NAME}"
-    rm -rf "${GIT_REPO_NAME}"
-    pwd
-    COMMAND="git clone -b main ${GIT_REPO}"
-    $COMMAND
-    RESULT=$?
-    if [ $RESULT -eq 0 ]; then
-        echo "INFO ::: FINISH ::: GIT clone SUCCESS for repo ::: $GIT_REPO_NAME"
+    if [ "$IS_ES" == "N" ]; then
+        echo "ERROR ::: ElasticSearch Domain is Not Configured. Need to Provision ElasticSearch Domain Before, NAC Provisioning."
+        echo "INFO ::: Begin ElasticSearch Domain Provisioning."
+    ########## Download ElasticSearch Provisioning Code from GitHub ##########
+        ### GITHUB_ORGANIZATION defaults to NasuniLabs
+        validate_github $GITHUB_ORGANIZATION $REPO_FOLDER 
+        ########################### Git Clone  ###############################################################
+        echo "INFO ::: BEGIN - Git Clone !!!"
+        ### Download Provisioning Code from GitHub
+        GIT_REPO_NAME=$(echo ${GIT_REPO} | sed 's/.*\/\([^ ]*\/[^.]*\).*/\1/' | cut -d "/" -f 2)
+        echo "INFO ::: $GIT_REPO"
+        echo "INFO ::: GIT_REPO_NAME $GIT_REPO_NAME"
+        pwd
+        ls
+        echo "INFO ::: Removing ${GIT_REPO_NAME}"
+        rm -rf "${GIT_REPO_NAME}"
+        pwd
+        COMMAND="git clone -b main ${GIT_REPO}"
+        $COMMAND
+        RESULT=$?
+        echo $RESULT
+        if [ $RESULT -eq 0 ]; then
+            echo "INFO ::: FINISH ::: GIT clone SUCCESS for repo ::: $GIT_REPO_NAME"
+        else
+            echo "INFO ::: FINISH ::: GIT Clone FAILED for repo ::: $GIT_REPO_NAME"
+            exit 1
+        fi
+        cd "${GIT_REPO_NAME}"
+        ##### RUN terraform init
+        echo "INFO ::: ElasticSearch provisioning ::: BEGIN ::: Executing ::: Terraform init . . . . . . . . "
+        COMMAND="terraform init"
+        $COMMAND
+        chmod 755 $(pwd)/*
+        # exit 1
+        echo "INFO ::: ElasticSearch provisioning ::: FINISH - Executing ::: Terraform init."
+        ##### RUN terraform Apply
+        echo "INFO ::: ElasticSearch provisioning ::: BEGIN ::: Executing ::: Terraform apply . . . . . . . . . . . . . . . . . . ."
+        COMMAND="terraform apply -auto-approve"
+        # COMMAND="terraform validate"
+        $COMMAND
+        if [ $? -eq 0 ]; then
+            echo "INFO ::: ElasticSearch provisioning ::: FINISH ::: Executing ::: Terraform apply ::: SUCCESS"
+        else
+            echo "ERROR ::: ElasticSearch provisioning ::: FINISH ::: Executing ::: Terraform apply ::: FAILED "
+            exit 1
+        fi
+        cd ..
     else
-        echo "INFO ::: FINISH ::: GIT Clone FAILED for repo ::: $GIT_REPO_NAME"
-        exit 1
+        echo "INFO ::: ElasticSearch Domain is Active . . . . . . . . . ."
+        echo "INFO ::: BEGIN ::: NAC Provisioning . . . . . . . . . . . ."
     fi
-    cd "${GIT_REPO_NAME}"
-    ##### RUN terraform init
-    echo "INFO ::: ElasticSearch provisioning ::: BEGIN ::: Executing ::: Terraform init . . . . . . . . "
-    COMMAND="terraform init"
-    $COMMAND
-    chmod 755 $(pwd)/*
-    # exit 1
-    echo "INFO ::: ElasticSearch provisioning ::: FINISH - Executing ::: Terraform init."
-    ##### RUN terraform Apply
-    echo "INFO ::: ElasticSearch provisioning ::: BEGIN ::: Executing ::: Terraform apply . . . . . . . . . . . . . . . . . . ."
-    COMMAND="terraform apply -auto-approve"
-    # COMMAND="terraform validate"
-    $COMMAND
-    if [ $? -eq 0 ]; then
-        echo "INFO ::: ElasticSearch provisioning ::: FINISH ::: Executing ::: Terraform apply ::: SUCCESS"
-    else
-        echo "ERROR ::: ElasticSearch provisioning ::: FINISH ::: Executing ::: Terraform apply ::: FAILED "
-        exit 1
-    fi
-    cd ..
-else
-    echo "INFO ::: ElasticSearch Domain is Active . . . . . . . . . ."
-    echo "INFO ::: BEGIN ::: NAC Provisioning . . . . . . . . . . . ."
+
+    ##################################### END ES Domain ###################################################################
+    }
+
+if [ "$SERVICE" == "es" ]; then
+    REPO_FOLDER = 'nasuni-analyticsconnector-opensearch'
+    check_for_es $REPO_FOLDER
+
 fi
 
-##################################### END ES Domain ###################################################################
-# exit 0
+if [ "$SERVICE" == "kendra" ]; then
+    REPO_FOLDER = 'nasuni-analyticsconnector-kendra'
+    check_for_kendra $REPO_FOLDER
+
+fi
+    GIT_REPO="https://github.com/$GITHUB_ORGANIZATION/$REPO_FOLDER.git"
+
+
+if [ "$SERVICE" == "es" ]; then
+    REPO_FOLDER = 'nasuni-analyticsconnector-opensearch'
+    check_for_es $REPO_FOLDER
+
+fi
+
+if [ "$SERVICE" == "kendra" ]; then
+    REPO_FOLDER = 'nasuni-analyticsconnector-kendra'
+    check_for_kendra $REPO_FOLDER
+
+fi
+    GIT_REPO="https://github.com/$GITHUB_ORGANIZATION/$REPO_FOLDER.git"
 
 NMC_VOLUME_NAME=$(echo "${TFVARS_FILE}" | rev | cut -d'/' -f 1 | rev |cut -d'.' -f 1)
 cd "$NMC_VOLUME_NAME"

@@ -99,10 +99,10 @@ nmc_endpoint_accessibility() {
 	chmod 400 $PEM
 	### nac_scheduler_name = from FourthArgument of NAC_Scheduler.sh, user_sec.txt
 	### parse_textfile_for_user_secret_keys_values user_sec.txt
-	# echo "INFO ::: Inside nmc_endpoint_accessibility"
+	echo "INFO ::: Inside nmc_endpoint_accessibility"
 	echo "INFO ::: NAC_SCHEDULER_NAME ::: ${NAC_SCHEDULER_NAME}"
 	echo "INFO ::: PUB_IP_ADDR_NAC_SCHEDULER ::: ${PUB_IP_ADDR_NAC_SCHEDULER}"
-	# echo "INFO ::: PEM ::: ${PEM}"
+	echo "INFO ::: PEM ::: ${PEM}"
 	echo "INFO ::: NMC_API_ENDPOINT ::: ${NMC_API_ENDPOINT}"
 	echo "INFO ::: NMC_API_USERNAME ::: ${NMC_API_USERNAME}"
 	echo "INFO ::: NMC_API_PASSWORD ::: ${NMC_API_PASSWORD}" # 31-37
@@ -407,7 +407,6 @@ Schedule_CRON_JOB() {
 	ssh -i "$PEM" ubuntu@"$NAC_SCHEDULER_IP_ADDR" -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null "[ ! -d $CRON_DIR_NAME ] && mkdir $CRON_DIR_NAME "
 	### Copy TFVARS and provision_nac.sh to NACScheduler
 	scp -i "$PEM" -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null provision_nac.sh "$TFVARS_FILE_NAME" ubuntu@$NAC_SCHEDULER_IP_ADDR:~/$CRON_DIR_NAME
-
 	RES="$?"
 	if [ $RES -ne 0 ]; then
 		echo "ERROR ::: Failed to Copy $TFVARS_FILE_NAME to NAC_Scheduer Instance."
@@ -689,7 +688,6 @@ else
 	Schedule_CRON_JOB $NAC_SCHEDULER_IP_ADDR
 	## Setup_Search_Lambda
 	## Setup_Search_UI
-
 fi
 
 END=$(date +%s)
